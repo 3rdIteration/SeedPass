@@ -51,32 +51,13 @@ class BIP85:
             print(f"{Fore.RED}Error initializing BIP32 context: {e}")
             raise Bip85Error(f"Error initializing BIP32 context: {e}")
 
-    def derive_entropy(
-        self, index: int, bytes_len: int, app_no: int = 39, words_len: int | None = None
-    ) -> bytes:
-        """
-        Derives entropy using BIP-85 HMAC-SHA512 method.
+    def _derive_entropy_for_path(self, path: str, bytes_len: int) -> bytes:
+        """Derive entropy for an explicit derivation path."""
 
-        Parameters:
-            index (int): Index for the child entropy.
-            bytes_len (int): Number of bytes to derive for the entropy.
-            app_no (int): Application number (default 39 for BIP39)
-
-        Returns:
-            bytes: Derived entropy.
-
-        Raises:
-            SystemExit: If derivation fails or entropy length is invalid.
-        """
-        if app_no == 39:
-            if words_len is None:
-                words_len = bytes_len
-            path = f"m/83696968'/{app_no}'/0'/{words_len}'/{index}'"
-        elif app_no == 32:
-            path = f"m/83696968'/{app_no}'/{index}'"
-        else:
-            # Handle other app_no if necessary
-            path = f"m/83696968'/{app_no}'/{index}'"
+        if not 1 <= bytes_len <= 64:
+            raise Bip85Error(
+                f"Invalid entropy length {bytes_len}; supported range is 1-64 bytes."
+            )
 
         try:
             child_key = self.bip32_ctx.DerivePath(path)
@@ -106,6 +87,40 @@ class BIP85:
             logging.error(f"Error deriving entropy: {e}", exc_info=True)
             print(f"{Fore.RED}Error deriving entropy: {e}")
             raise Bip85Error(f"Error deriving entropy: {e}")
+
+    def derive_entropy(
+        self, index: int, bytes_len: int, app_no: int = 39, words_len: int | None = None
+    ) -> bytes:
+        """
+        Derives entropy using BIP-85 HMAC-SHA512 method.
+
+        Parameters:
+            index (int): Index for the child entropy.
+            bytes_len (int): Number of bytes to derive for the entropy.
+            app_no (int): Application number (default 39 for BIP39)
+
+        Returns:
+            bytes: Derived entropy.
+
+        Raises:
+            SystemExit: If derivation fails or entropy length is invalid.
+        """
+        if app_no == 39:
+            if words_len is None:
+                words_len = bytes_len
+            path = f"m/83696968'/{app_no}'/0'/{words_len}'/{index}'"
+        elif app_no == 32:
+            path = f"m/83696968'/{app_no}'/{index}'"
+        else:
+            # Handle other app_no if necessary
+            path = f"m/83696968'/{app_no}'/{index}'"
+
+        return self._derive_entropy_for_path(path, bytes_len)
+
+    def derive_entropy_from_path(self, path: str, bytes_len: int) -> bytes:
+        """Derive entropy using an explicit BIP85 path."""
+
+        return self._derive_entropy_for_path(path, bytes_len)
 
     def derive_mnemonic(self, index: int, words_num: int) -> str:
         bytes_len = {12: 16, 18: 24, 24: 32}.get(words_num)

@@ -27,6 +27,7 @@ def test_pgp_key_determinism():
 
         assert fp1 == fp2
         assert key1 == key2
+        assert fp1 == "0D973716792FBF2CAD1BD5E624BDD87CADFFAFFE"
 
         # parse returned armored key and verify fingerprint
         from pgpy import PGPKey
@@ -39,3 +40,27 @@ def test_pgp_key_determinism():
         entry = data["entries"][str(idx)]
         assert entry["key_type"] == "ed25519"
         assert entry["user_id"] == "Test"
+
+
+def test_pgp_rsa_key_determinism():
+    with TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        vault, enc_mgr = create_vault(tmp_path, TEST_SEED, TEST_PASSWORD)
+        cfg_mgr = ConfigManager(vault, tmp_path)
+        backup_mgr = BackupManager(tmp_path, cfg_mgr)
+        entry_mgr = EntryManager(vault, backup_mgr)
+
+        idx = entry_mgr.add_pgp_key(
+            "pgp-rsa", TEST_SEED, key_type="rsa", user_id="RSA Test"
+        )
+        key1, fp1 = entry_mgr.get_pgp_key(idx, TEST_SEED)
+        key2, fp2 = entry_mgr.get_pgp_key(idx, TEST_SEED)
+
+        assert fp1 == fp2
+        assert key1 == key2
+        assert fp1 == "AAFBC88EB258406A831E84051EA43E0D063C7676"
+
+        from pgpy import PGPKey
+
+        parsed_key, _ = PGPKey.from_blob(key1)
+        assert parsed_key.fingerprint == fp1
