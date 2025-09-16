@@ -20,6 +20,7 @@ import string
 import random
 import traceback
 import base64
+import datetime
 from typing import Optional
 from dataclasses import dataclass
 from termcolor import colored
@@ -52,6 +53,74 @@ from .encryption import EncryptionManager
 
 # Instantiate the logger
 logger = logging.getLogger(__name__)
+
+
+_BIP85_APPLICATION_ROOT = 83696968
+BITCOIN_GENESIS_TIMESTAMP = 1231006505
+
+
+@dataclass(frozen=True)
+class _PGPKeyTypeConfig:
+    app_no: int
+    default_bits: int
+    allows_custom_bits: bool
+
+
+_PGP_KEY_TYPE_INFO: dict[str, _PGPKeyTypeConfig] = {
+    "rsa": _PGPKeyTypeConfig(app_no=828365, default_bits=2048, allows_custom_bits=True),
+    "ed25519": _PGPKeyTypeConfig(
+        app_no=828366, default_bits=256, allows_custom_bits=False
+    ),
+}
+
+_PGP_KEY_TYPE_ALIASES = {
+    "curve25519": "ed25519",
+}
+
+
+def _parse_pgp_key_type(key_type: str) -> tuple[str, _PGPKeyTypeConfig, int]:
+    """Normalize the requested key type and extract the key size."""
+
+    if not key_type or not key_type.strip():
+        raise ValueError("PGP key type must be provided")
+
+    raw = key_type.strip().lower()
+    bits: int | None = None
+
+    for sep in (":", "-"):
+        if sep in raw:
+            base, suffix = raw.split(sep, 1)
+            if suffix.isdigit():
+                bits = int(suffix)
+                raw = base
+            else:
+                raw = base
+            break
+
+    normalized = _PGP_KEY_TYPE_ALIASES.get(raw, raw)
+    config = _PGP_KEY_TYPE_INFO.get(normalized)
+    if config is None:
+        supported = ", ".join(sorted(_PGP_KEY_TYPE_INFO))
+        raise ValueError(
+            f"Unsupported PGP key type '{key_type}'. Supported types: {supported}"
+        )
+
+    if bits is None:
+        bits = config.default_bits
+    else:
+        if bits <= 0:
+            raise ValueError("PGP key size must be a positive integer")
+        if not config.allows_custom_bits and bits != config.default_bits:
+            raise ValueError(
+                f"Key type '{normalized}' does not support custom key sizes"
+            )
+        if config.allows_custom_bits:
+            if bits < 2048:
+                raise ValueError("RSA key size must be at least 2048 bits")
+            if bits % 256 != 0:
+                raise ValueError("RSA key size must be a multiple of 256 bits")
+
+    return normalized, config, bits
 
 
 @dataclass
@@ -459,6 +528,11 @@ def derive_pgp_key(
 ) -> tuple[str, str]:
     """Derive a deterministic PGP private key and return it with its fingerprint."""
 
+    if idx < 0:
+        raise ValueError("Derivation index must be non-negative")
+
+    normalized_type, config, key_bits = _parse_pgp_key_type(key_type)
+
     from pgpy import PGPKey, PGPUID
     from pgpy.packet.packets import PrivKeyV4
     from pgpy.packet.fields import (
@@ -480,26 +554,26 @@ def derive_pgp_key(
     from Crypto.Util.number import inverse
     from cryptography.hazmat.primitives.asymmetric import ed25519
     from cryptography.hazmat.primitives import serialization
-    import hashlib
-    import datetime
 
-    entropy = bip85.derive_entropy(index=idx, bytes_len=32, app_no=32)
-    created = datetime.datetime(2000, 1, 1, tzinfo=datetime.timezone.utc)
+    path = f"m/{_BIP85_APPLICATION_ROOT}'/{config.app_no}'/{key_bits}'/{idx}'"
+    entropy = bip85.derive_entropy_from_path(path, bytes_len=64)
+    created = datetime.datetime.fromtimestamp(
+        BITCOIN_GENESIS_TIMESTAMP, tz=datetime.timezone.utc
+    )
 
-    if key_type.lower() == "rsa":
+    if normalized_type == "rsa":
+        from Crypto.Hash import SHAKE256
 
-        class DRNG:
+        class BIP85DRNG:
             def __init__(self, seed: bytes) -> None:
-                self.seed = seed
+                if len(seed) != 64:
+                    raise ValueError("RSA key derivation requires 64 bytes of entropy")
+                self._shake = SHAKE256.new(data=seed)
 
             def __call__(self, n: int) -> bytes:  # pragma: no cover - deterministic
-                out = b""
-                while len(out) < n:
-                    self.seed = hashlib.sha256(self.seed).digest()
-                    out += self.seed
-                return out[:n]
+                return self._shake.read(n)
 
-        rsa_key = RSA.generate(2048, randfunc=DRNG(entropy))
+        rsa_key = RSA.generate(key_bits, randfunc=BIP85DRNG(entropy))
         keymat = RSAPriv()
         keymat.n = MPI(rsa_key.n)
         keymat.e = MPI(rsa_key.e)
@@ -513,13 +587,14 @@ def derive_pgp_key(
         pkt.pkalg = PubKeyAlgorithm.RSAEncryptOrSign
         pkt.keymaterial = keymat
     else:
-        priv = ed25519.Ed25519PrivateKey.from_private_bytes(entropy)
+        seed_material = entropy[:32]
+        priv = ed25519.Ed25519PrivateKey.from_private_bytes(seed_material)
         public = priv.public_key().public_bytes(
             serialization.Encoding.Raw, serialization.PublicFormat.Raw
         )
         keymat = EdDSAPriv()
         keymat.oid = EllipticCurveOID.Ed25519
-        keymat.s = MPI(int.from_bytes(entropy, "big"))
+        keymat.s = MPI(int.from_bytes(seed_material, "big"))
         keymat.p = ECPoint.from_values(
             keymat.oid.key_size, ECPointFormat.Native, public
         )
