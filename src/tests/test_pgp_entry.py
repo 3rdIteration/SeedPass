@@ -27,7 +27,7 @@ def test_pgp_key_determinism():
 
         assert fp1 == fp2
         assert key1 == key2
-        assert fp1 == "0D973716792FBF2CAD1BD5E624BDD87CADFFAFFE"
+        assert fp1 == "9837B7E85F711F478DBE22EB641301EA97DA37C5"
 
         # parse returned armored key and verify fingerprint
         from pgpy import PGPKey
@@ -58,7 +58,7 @@ def test_pgp_rsa_key_determinism():
 
         assert fp1 == fp2
         assert key1 == key2
-        assert fp1 == "AAFBC88EB258406A831E84051EA43E0D063C7676"
+        assert fp1 == "ECC1557BE1B91255FAC1BB370ABFE55998DF2870"
 
         from pgpy import PGPKey
 

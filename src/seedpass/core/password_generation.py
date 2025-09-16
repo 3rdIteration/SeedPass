@@ -20,6 +20,7 @@ import string
 import random
 import traceback
 import base64
+import datetime
 from typing import Optional
 from dataclasses import dataclass
 from termcolor import colored
@@ -55,6 +56,7 @@ logger = logging.getLogger(__name__)
 
 
 _BIP85_APPLICATION_ROOT = 83696968
+BITCOIN_GENESIS_TIMESTAMP = 1231006505
 
 
 @dataclass(frozen=True)
@@ -552,11 +554,12 @@ def derive_pgp_key(
     from Crypto.Util.number import inverse
     from cryptography.hazmat.primitives.asymmetric import ed25519
     from cryptography.hazmat.primitives import serialization
-    import datetime
 
     path = f"m/{_BIP85_APPLICATION_ROOT}'/{config.app_no}'/{key_bits}'/{idx}'"
     entropy = bip85.derive_entropy_from_path(path, bytes_len=64)
-    created = datetime.datetime(2009, 1, 3, 18, 5, 5, tzinfo=datetime.timezone.utc)
+    created = datetime.datetime.fromtimestamp(
+        BITCOIN_GENESIS_TIMESTAMP, tz=datetime.timezone.utc
+    )
 
     if normalized_type == "rsa":
         from Crypto.Hash import SHAKE256
